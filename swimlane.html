@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asset Cycle Observer - Swim Lanes</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      padding: 32px 24px;
+    }
+    .header {
+      margin-bottom: 24px;
+      padding: 0 16px;
+    }
+    .header h1 {
+      font-size: 26px;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+    .header p {
+      font-size: 13px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .lanes {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .lane {
+      display: flex;
+      align-items: stretch;
+      background: rgba(255,255,255,0.015);
+      border-radius: 6px;
+      overflow: hidden;
+      height: 120px;
+    }
+    .lane-label {
+      width: 140px;
+      min-width: 140px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 12px 16px;
+      gap: 4px;
+      border-right: 1px solid rgba(255,255,255,0.04);
+    }
+    .lane-label .name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .lane-label .gain {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .lane-label .dates {
+      font-size: 10px;
+      color: #555;
+      line-height: 1.4;
+    }
+    .lane-label .status {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      display: inline-block;
+      width: fit-content;
+      margin-top: 2px;
+    }
+    .lane-chart {
+      flex: 1;
+      min-width: 0;
+    }
+    /* Shared time axis at the bottom */
+    #timeAxis {
+      height: 32px;
+      margin-left: 140px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Super Cycle 2022 — 2026</h1>
+    <p>各资产周期涨幅对比 · 泳道图</p>
+  </div>
+  <div class="lanes" id="lanes"></div>
+  <div id="timeAxis"></div>
+
+  <script>
+    // ========== Mock Data ==========
+    function generateDailyDates(startDate, endDate) {
+      const dates = [];
+      const d = new Date(startDate);
+      const end = new Date(endDate);
+      while (d <= end) {
+        dates.push(new Date(d));
+        d.setDate(d.getDate() + 1);
+      }
+      return dates;
+    }
+
+    function generatePriceSeries(dates, startPrice, endPrice, bottomDate, peakDate, volatility) {
+      const bottom = new Date(bottomDate).getTime();
+      const peak = peakDate ? new Date(peakDate).getTime() : dates[dates.length - 1].getTime();
+      const totalDuration = peak - bottom;
+      let price = startPrice;
+      const data = [];
+      for (const date of dates) {
+        const t = date.getTime();
+        if (t < bottom) {
+          const distToBottom = (bottom - t) / (1000 * 60 * 60 * 24 * 180);
+          const decline = startPrice * 0.3 * distToBottom;
+          price = startPrice + decline + (Math.random() - 0.5) * startPrice * volatility;
+        } else if (t <= peak) {
+          const progress = (t - bottom) / totalDuration;
+          const sCurve = 1 / (1 + Math.exp(-12 * (progress - 0.4)));
+          const targetPrice = startPrice + (endPrice - startPrice) * sCurve;
+          price = targetPrice + (Math.random() - 0.5) * targetPrice * volatility;
+        } else {
+          const daysPastPeak = (t - peak) / (1000 * 60 * 60 * 24);
+          price = endPrice * (1 - 0.0005 * daysPastPeak) + (Math.random() - 0.5) * endPrice * volatility;
+        }
+        price = Math.max(price, startPrice * 0.5);
+        data.push({ date: date.toISOString().split('T')[0], price, timestamp: t });
+      }
+      return data;
+    }
+
+    function normalizeSeries(data, bottomDate) {
+      const bottomTime = new Date(bottomDate).getTime();
+      let bottomPrice = data[0].price, minDist = Infinity;
+      for (const d of data) {
+        const dist = Math.abs(d.timestamp - bottomTime);
+        if (dist < minDist) { minDist = dist; bottomPrice = d.price; }
+      }
+      return data.map(d => ({
+        date: d.date,
+        pct: ((d.price - bottomPrice) / bottomPrice) * 100,
+        price: d.price
+      }));
+    }
+
+    const allDates = generateDailyDates('2022-01-01', '2026-04-04');
+
+    const assets = [
+      { name: 'BTC',       color: '#f7931a', bottomDate: '2022-11-21', peakDate: '2025-01-20', startPrice: 15500,  endPrice: 108000, volatility: 0.025, peaked: true },
+      { name: 'ETH',       color: '#627eea', bottomDate: '2022-06-18', peakDate: '2024-12-06', startPrice: 880,    endPrice: 4090,   volatility: 0.03,  peaked: true },
+      { name: 'Nasdaq 100', color: '#4fc3f7', bottomDate: '2022-10-13', peakDate: '2025-02-19', startPrice: 10440,  endPrice: 22220,  volatility: 0.012, peaked: true },
+      { name: 'S&P 500',   color: '#66bb6a', bottomDate: '2022-10-12', peakDate: '2025-02-19', startPrice: 3490,   endPrice: 6140,   volatility: 0.01,  peaked: true },
+      { name: 'Gold',      color: '#ffd54f', bottomDate: '2022-09-28', peakDate: null,          startPrice: 1620,   endPrice: 3160,   volatility: 0.008, peaked: false },
+      { name: 'Crude Oil',  color: '#ef5350', bottomDate: '2023-05-04', peakDate: '2024-04-12', startPrice: 63.6,   endPrice: 87.7,   volatility: 0.02,  peaked: true },
+    ];
+
+    // Generate & normalize
+    const seriesData = assets.map(a => {
+      const raw = generatePriceSeries(allDates, a.startPrice, a.endPrice, a.bottomDate, a.peakDate || '2026-04-04', a.volatility);
+      const norm = normalizeSeries(raw, a.bottomDate);
+      return { ...a, data: norm };
+    });
+
+    // Sort by gain descending
+    seriesData.sort((a, b) => {
+      const maxA = Math.max(...a.data.map(d => d.pct));
+      const maxB = Math.max(...b.data.map(d => d.pct));
+      return maxB - maxA;
+    });
+
+    // All dates as category labels
+    const dateLabels = allDates.map(d => d.toISOString().split('T')[0]);
+
+    // ========== Render Lanes ==========
+    const lanesContainer = document.getElementById('lanes');
+    const charts = [];
+
+    seriesData.forEach((s, idx) => {
+      const maxPct = Math.max(...s.data.map(d => d.pct));
+      const bottomTime = new Date(s.bottomDate).getTime();
+      const peakTime = s.peakDate ? new Date(s.peakDate).getTime() : new Date('2026-04-04').getTime();
+
+      // Create lane DOM
+      const lane = document.createElement('div');
+      lane.className = 'lane';
+
+      const formatDate = (d) => { const p = d.split('-'); return p[1] + '/' + p[2].substring(0,2) + '/' + p[0].substring(2); };
+
+      lane.innerHTML = `
+        <div class="lane-label">
+          <div class="name" style="color:${s.color}">${s.name}</div>
+          <div class="gain" style="color:${s.color}">+${maxPct.toFixed(0)}%</div>
+          <div class="dates">
+            ${formatDate(s.bottomDate)} → ${s.peaked ? formatDate(s.peakDate) : 'ongoing'}
+          </div>
+          <div class="status" style="background:${s.peaked ? 'rgba(76,175,80,0.12)' : 'rgba(255,167,38,0.12)'};color:${s.peaked ? '#66bb6a' : '#ffa726'}">
+            ${s.peaked ? 'Peaked' : 'Running'}
+          </div>
+        </div>
+        <div class="lane-chart" id="lane-chart-${idx}"></div>
+      `;
+      lanesContainer.appendChild(lane);
+
+      // Init ECharts
+      const chartDom = document.getElementById(`lane-chart-${idx}`);
+      const chart = echarts.init(chartDom, null, { renderer: 'canvas' });
+
+      // Build two area series: dimmed full + bright bull
+      const fullData = s.data.map(d => d.pct);
+      const bullData = s.data.map(d => {
+        const t = new Date(d.date).getTime();
+        return (t >= bottomTime && t <= peakTime) ? d.pct : null;
+      });
+
+      chart.setOption({
+        backgroundColor: 'transparent',
+        animation: false,
+        grid: { left: 0, right: 0, top: 8, bottom: 0 },
+        xAxis: {
+          type: 'category',
+          data: dateLabels,
+          show: false,
+          boundaryGap: false
+        },
+        yAxis: {
+          type: 'value',
+          show: false,
+          min: function(value) { return value.min - (value.max - value.min) * 0.1; },
+          max: function(value) { return value.max + (value.max - value.min) * 0.1; }
+        },
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(20, 20, 30, 0.95)',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1,
+          textStyle: { color: '#e0e0e0', fontSize: 12 },
+          formatter: function(params) {
+            const p = params[0];
+            const dataPoint = s.data.find(d => d.date === p.axisValue);
+            if (!dataPoint) return '';
+            const pct = dataPoint.pct;
+            const pctColor = pct >= 0 ? '#66bb6a' : '#ef5350';
+            const priceStr = dataPoint.price >= 10000 ? '$' + (dataPoint.price/1000).toFixed(1) + 'k' : dataPoint.price >= 100 ? '$' + dataPoint.price.toFixed(0) : '$' + dataPoint.price.toFixed(2);
+            return `<div style="font-size:11px;color:#888">${p.axisValue}</div>
+                    <div style="margin-top:4px"><span style="color:${s.color}">${s.name}</span>
+                    <span style="color:${pctColor};margin-left:8px">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</span>
+                    <span style="color:#666;margin-left:8px">${priceStr}</span></div>`;
+          }
+        },
+        series: [
+          // Dimmed full line
+          {
+            type: 'line',
+            data: fullData,
+            symbol: 'none',
+            smooth: 0.3,
+            lineStyle: { width: 1, color: s.color, opacity: 0.15 },
+            areaStyle: { color: s.color, opacity: 0.02 },
+            silent: true
+          },
+          // Bright bull period
+          {
+            type: 'line',
+            data: bullData,
+            symbol: 'none',
+            smooth: 0.3,
+            connectNulls: false,
+            lineStyle: { width: 2, color: s.color },
+            areaStyle: {
+              color: {
+                type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                colorStops: [
+                  { offset: 0, color: s.color.replace(')', ',0.25)').replace('rgb', 'rgba').replace('#', '') },
+                  { offset: 1, color: 'rgba(0,0,0,0)' }
+                ]
+              }
+            },
+            // Use a proper gradient
+            areaStyle: (function() {
+              // Convert hex to rgba
+              const hex = s.color;
+              const r = parseInt(hex.slice(1,3), 16);
+              const g = parseInt(hex.slice(3,5), 16);
+              const b = parseInt(hex.slice(5,7), 16);
+              return {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: `rgba(${r},${g},${b},0.3)` },
+                  { offset: 1, color: `rgba(${r},${g},${b},0.02)` }
+                ])
+              };
+            })(),
+            markLine: {
+              silent: true,
+              symbol: ['none', 'none'],
+              lineStyle: { color: s.color, type: 'dashed', opacity: 0.3, width: 1 },
+              label: { show: false },
+              data: [
+                { xAxis: s.bottomDate },
+                ...(s.peaked ? [{ xAxis: s.peakDate }] : [])
+              ]
+            }
+          }
+        ]
+      });
+
+      charts.push(chart);
+    });
+
+    // ========== Shared Time Axis ==========
+    const axisChart = echarts.init(document.getElementById('timeAxis'), null, { renderer: 'canvas' });
+    axisChart.setOption({
+      backgroundColor: 'transparent',
+      animation: false,
+      grid: { left: 0, right: 0, top: 0, bottom: 0 },
+      xAxis: {
+        type: 'category',
+        data: dateLabels,
+        boundaryGap: false,
+        axisLine: { lineStyle: { color: '#222' } },
+        axisTick: { show: false },
+        axisLabel: {
+          color: '#555',
+          fontSize: 11,
+          formatter: function(value) {
+            const d = new Date(value);
+            if (d.getMonth() === 0) return d.getFullYear().toString();
+            if (d.getMonth() % 3 === 0) {
+              const months = ['','','','Apr','','','Jul','','','Oct','',''];
+              return months[d.getMonth()] || '';
+            }
+            return '';
+          }
+        }
+      },
+      yAxis: { show: false },
+      series: []
+    });
+
+    // ========== Sync tooltips across lanes ==========
+    charts.forEach((c, i) => {
+      c.on('updateAxisPointer', function(event) {
+        const dataIndex = event.dataIndex;
+        if (dataIndex === undefined) return;
+        charts.forEach((other, j) => {
+          if (i !== j) {
+            other.dispatchAction({
+              type: 'showTip',
+              seriesIndex: 0,
+              dataIndex: dataIndex
+            });
+          }
+        });
+        axisChart.dispatchAction({
+          type: 'showTip',
+          seriesIndex: 0,
+          dataIndex: dataIndex
+        });
+      });
+    });
+
+    // Resize
+    window.addEventListener('resize', () => {
+      charts.forEach(c => c.resize());
+      axisChart.resize();
+    });
+  </script>
+</body>
+</html>

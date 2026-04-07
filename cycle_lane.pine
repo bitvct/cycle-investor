@@ -1,0 +1,80 @@
+//@version=5
+indicator("Cycle Lane", overlay=false, format=format.percent)
+
+// ========== Settings ==========
+sym        = input.symbol("BINANCE:BTCUSDT", "Symbol")
+lbl        = input.string("BTC", "Label")
+col        = input.color(#f7931a, "Color")
+bp         = input.float(15500, "Bottom Price")
+bottomTime = input.time(timestamp("2022-11-21"), "Cycle Bottom")
+autoTop    = input.bool(true, "Auto Detect Top")
+peakTime   = input.time(timestamp("2025-01-20"), "Cycle Top (manual)")
+dimLevel   = input.int(85, "Dim Transparency (0-100)", minval=0, maxval=100)
+
+// ========== Fetch & Normalize ==========
+price = request.security(sym, timeframe.period, close)
+pct   = bp > 0 ? (price - bp) / bp * 100 : na
+
+// ========== Auto-detect top (ATH after bottom) ==========
+var float athPrice = na
+var float athPct   = na
+var int   athTime  = na
+
+if time >= bottomTime
+    if na(athPct) or pct > athPct
+        athPrice := price
+        athPct   := pct
+        athTime  := time
+
+// ========== Resolve top ==========
+// Auto mode: use ATH after bottom
+// Manual mode: use input peakTime and capture price there
+var float manualTopPrice = na
+var float manualTopPct   = na
+if not autoTop and time >= peakTime and time[1] < peakTime
+    manualTopPrice := price
+    manualTopPct   := pct
+
+effectiveTopTime  = autoTop ? athTime  : peakTime
+effectiveTopPrice = autoTop ? athPrice : manualTopPrice
+effectiveTopPct   = autoTop ? athPct   : manualTopPct
+
+// ========== Bull range ==========
+inBull = time >= bottomTime and time <= effectiveTopTime
+
+// ========== Colors ==========
+colBright = color.new(col, 0)
+colDim    = color.new(col, dimLevel)
+colFill   = color.new(col, inBull ? 80 : 96)
+
+// ========== Plot ==========
+// Visual line (pane only, no Y-axis label)
+pctPlot  = plot(pct, "Cycle", color=inBull ? colBright : colDim, linewidth=2, display=display.pane)
+zeroPlot = plot(0, "", color=color.new(color.white, 98), display=display.none)
+
+// Y-axis label: show top pct after top, otherwise current pct
+yAxisVal = not na(effectiveTopPct) and time >= effectiveTopTime ? effectiveTopPct : pct
+plot(yAxisVal, "Peak", color=color.new(col, 100), display=display.price_scale + display.status_line)
+
+// Area fill
+fill(pctPlot, zeroPlot, color=colFill)
+
+// Zero line
+hline(0, "0%", color=color.new(color.white, 92), linestyle=hline.style_dotted)
+
+// ========== Labels ==========
+// Bottom label
+if time >= bottomTime and time[1] < bottomTime
+    label.new(bar_index, pct, lbl + " Bottom\n" + str.tostring(math.round(bp)), color=color.new(col, 70), textcolor=col, style=label.style_label_up, size=size.small)
+
+// Top label (always on the last bar, so it updates dynamically)
+if barstate.islast and not na(effectiveTopPct)
+    int topBarIdx = ta.valuewhen(time >= effectiveTopTime and (time[1] < effectiveTopTime or na(time[1])), bar_index, 0)
+    if autoTop
+        // Auto mode: draw label at ATH position
+        label topLbl = label.new(topBarIdx, effectiveTopPct, lbl + " Top (auto)\n" + str.tostring(math.round(effectiveTopPrice)), color=color.new(col, 70), textcolor=col, style=label.style_label_down, size=size.small)
+        label.delete(topLbl[1])
+    else
+        // Manual mode: draw at peakTime
+        label topLbl = label.new(topBarIdx, effectiveTopPct, lbl + " Top\n" + str.tostring(math.round(effectiveTopPrice)), color=color.new(col, 70), textcolor=col, style=label.style_label_down, size=size.small)
+        label.delete(topLbl[1])

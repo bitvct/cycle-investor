@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asset Cycle Observer - Mockup</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+    .header {
+      padding: 32px 40px 16px;
+    }
+    .header h1 {
+      font-size: 28px;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+    .header p {
+      font-size: 14px;
+      color: #888;
+      margin-top: 6px;
+    }
+    #chart {
+      width: 100%;
+      height: calc(100vh - 200px);
+      min-height: 500px;
+    }
+    .legend-bar {
+      display: flex;
+      gap: 24px;
+      padding: 8px 40px 16px;
+      flex-wrap: wrap;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #aaa;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .legend-item:hover { opacity: 0.7; }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .legend-item .peak-tag {
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.08);
+      color: #666;
+      margin-left: 2px;
+    }
+    .legend-item .peak-tag.active {
+      background: rgba(76, 175, 80, 0.15);
+      color: #66bb6a;
+    }
+    .legend-item .peak-tag.running {
+      background: rgba(255, 167, 38, 0.15);
+      color: #ffa726;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Super Cycle 2022-2026</h1>
+    <p>各资产归一化涨幅对比 | 以各自周期低点为 0%</p>
+  </div>
+  <div class="legend-bar" id="legendBar"></div>
+  <div id="chart"></div>
+
+  <script>
+    // ========== Mock Data Generation ==========
+    // Generate realistic-looking price data for each asset
+
+    function generateDailyDates(startDate, endDate) {
+      const dates = [];
+      const d = new Date(startDate);
+      const end = new Date(endDate);
+      while (d <= end) {
+        // Skip weekends for stock-like assets
+        dates.push(new Date(d));
+        d.setDate(d.getDate() + 1);
+      }
+      return dates;
+    }
+
+    function generatePriceSeries(dates, startPrice, endPrice, bottomDate, peakDate, volatility = 0.015) {
+      const bottom = new Date(bottomDate).getTime();
+      const peak = peakDate ? new Date(peakDate).getTime() : dates[dates.length - 1].getTime();
+      const totalDuration = peak - bottom;
+
+      let price = startPrice;
+      const data = [];
+
+      for (const date of dates) {
+        const t = date.getTime();
+
+        if (t < bottom) {
+          // Before bottom: declining with noise
+          const distToBottom = (bottom - t) / (1000 * 60 * 60 * 24 * 180);
+          const decline = startPrice * 0.3 * distToBottom;
+          price = startPrice + decline + (Math.random() - 0.5) * startPrice * volatility;
+        } else if (t <= peak) {
+          // From bottom to peak: S-curve growth with noise
+          const progress = (t - bottom) / totalDuration;
+          // S-curve: slow start, fast middle, slow end
+          const sCurve = 1 / (1 + Math.exp(-12 * (progress - 0.4)));
+          const targetPrice = startPrice + (endPrice - startPrice) * sCurve;
+          price = targetPrice + (Math.random() - 0.5) * targetPrice * volatility;
+        } else {
+          // After peak: slight decline with noise
+          const daysPastPeak = (t - peak) / (1000 * 60 * 60 * 24);
+          const declineRate = 0.0005;
+          price = endPrice * (1 - declineRate * daysPastPeak) + (Math.random() - 0.5) * endPrice * volatility;
+        }
+
+        price = Math.max(price, startPrice * 0.5);
+        data.push({
+          date: date.toISOString().split('T')[0],
+          price: price,
+          timestamp: t
+        });
+      }
+
+      return data;
+    }
+
+    // Normalize to percentage from cycle bottom
+    function normalizeSeries(data, bottomDate) {
+      const bottomTime = new Date(bottomDate).getTime();
+      // Find price closest to bottom date
+      let bottomPrice = data[0].price;
+      let minDist = Infinity;
+      for (const d of data) {
+        const dist = Math.abs(d.timestamp - bottomTime);
+        if (dist < minDist) {
+          minDist = dist;
+          bottomPrice = d.price;
+        }
+      }
+
+      return data.map(d => ({
+        date: d.date,
+        pct: ((d.price - bottomPrice) / bottomPrice) * 100,
+        price: d.price
+      }));
+    }
+
+    // ========== Asset Definitions ==========
+    const allDates = generateDailyDates('2022-01-01', '2026-04-04');
+
+    const assets = [
+      {
+        name: 'BTC',
+        color: '#f7931a',
+        bottomDate: '2022-11-21',
+        peakDate: '2025-01-20',
+        startPrice: 15500,
+        endPrice: 108000,
+        volatility: 0.025,
+        peaked: true
+      },
+      {
+        name: 'Nasdaq 100',
+        color: '#4fc3f7',
+        bottomDate: '2022-10-13',
+        peakDate: '2025-02-19',
+        startPrice: 10440,
+        endPrice: 22220,
+        volatility: 0.012,
+        peaked: true
+      },
+      {
+        name: 'Gold',
+        color: '#ffd54f',
+        bottomDate: '2022-09-28',
+        peakDate: null,
+        startPrice: 1620,
+        endPrice: 3160,
+        volatility: 0.008,
+        peaked: false
+      },
+      {
+        name: 'ETH',
+        color: '#627eea',
+        bottomDate: '2022-06-18',
+        peakDate: '2024-12-06',
+        startPrice: 880,
+        endPrice: 4090,
+        volatility: 0.03,
+        peaked: true
+      },
+      {
+        name: 'S&P 500',
+        color: '#66bb6a',
+        bottomDate: '2022-10-12',
+        peakDate: '2025-02-19',
+        startPrice: 3490,
+        endPrice: 6140,
+        volatility: 0.01,
+        peaked: true
+      },
+      {
+        name: 'Crude Oil',
+        color: '#ef5350',
+        bottomDate: '2023-05-04',
+        peakDate: '2024-04-12',
+        startPrice: 63.6,
+        endPrice: 87.7,
+        volatility: 0.02,
+        peaked: true
+      }
+    ];
+
+    // Generate data
+    const seriesData = assets.map(asset => {
+      const raw = generatePriceSeries(
+        allDates,
+        asset.startPrice,
+        asset.endPrice,
+        asset.bottomDate,
+        asset.peakDate || '2026-04-04',
+        asset.volatility
+      );
+      const normalized = normalizeSeries(raw, asset.bottomDate);
+      return { ...asset, data: normalized };
+    });
+
+    // ========== Build Legend ==========
+    const legendBar = document.getElementById('legendBar');
+    seriesData.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+
+      const maxPct = Math.max(...s.data.map(d => d.pct));
+      const statusTag = s.peaked
+        ? `<span class="peak-tag active">Peaked +${maxPct.toFixed(0)}%</span>`
+        : `<span class="peak-tag running">Running +${maxPct.toFixed(0)}%</span>`;
+
+      item.innerHTML = `
+        <span class="legend-dot" style="background:${s.color}"></span>
+        <span>${s.name}</span>
+        ${statusTag}
+      `;
+      legendBar.appendChild(item);
+    });
+
+    // ========== Build Chart ==========
+    const chart = echarts.init(document.getElementById('chart'), null, { renderer: 'canvas' });
+
+    // Mark areas for each asset's bull period
+    const markAreas = seriesData.map(s => ({
+      name: s.name,
+      color: s.color,
+      bottomDate: s.bottomDate,
+      peakDate: s.peakDate
+    }));
+
+    const series = [];
+
+    seriesData.forEach((s, i) => {
+      const bottomTime = new Date(s.bottomDate).getTime();
+      const peakTime = s.peakDate ? new Date(s.peakDate).getTime() : new Date('2026-04-04').getTime();
+
+      // 1) Faded full-range line (dimmed)
+      series.push({
+        name: s.name,
+        type: 'line',
+        symbol: 'none',
+        smooth: 0.3,
+        lineStyle: {
+          width: 1.5,
+          color: s.color,
+          opacity: 0.15
+        },
+        itemStyle: {
+          color: s.color,
+          opacity: 0.15
+        },
+        emphasis: {
+          lineStyle: { width: 2, opacity: 0.3 }
+        },
+        data: s.data.map(d => [d.date, d.pct.toFixed(2)]),
+        markArea: {
+          silent: true,
+          itemStyle: {
+            color: s.color,
+            opacity: 0.03
+          },
+          data: [[
+            { xAxis: s.bottomDate },
+            { xAxis: s.peakDate || '2026-04-04' }
+          ]]
+        }
+      });
+
+      // 2) Bright highlighted line (bottom to peak only)
+      const highlightData = s.data.map(d => {
+        const t = new Date(d.date).getTime();
+        const inRange = t >= bottomTime && t <= peakTime;
+        return [d.date, inRange ? d.pct.toFixed(2) : '-'];
+      });
+
+      series.push({
+        name: s.name + '_highlight',
+        type: 'line',
+        symbol: 'none',
+        smooth: 0.3,
+        lineStyle: {
+          width: 2.5,
+          color: s.color
+        },
+        itemStyle: {
+          color: s.color
+        },
+        emphasis: {
+          lineStyle: { width: 3.5 }
+        },
+        // Connect null breaks so the line stops cleanly
+        connectNulls: false,
+        data: highlightData,
+        // Hide from tooltip (the faded series handles it)
+        tooltip: { show: false },
+        markPoint: {
+          symbol: 'circle',
+          symbolSize: 8,
+          itemStyle: {
+            color: s.color,
+            borderColor: '#0a0a0f',
+            borderWidth: 2
+          },
+          label: {
+            show: true,
+            position: 'top',
+            color: s.color,
+            fontSize: 11,
+            formatter: (params) => params.name
+          },
+          data: [
+            // Bottom marker
+            {
+              name: 'Bottom',
+              coord: [s.bottomDate, (() => {
+                const d = s.data.find(d => d.date === s.bottomDate);
+                return d ? d.pct.toFixed(2) : '0';
+              })()]
+            },
+            // Peak marker (only if peaked)
+            ...(s.peaked ? [{
+              name: 'Top',
+              coord: [s.peakDate, Math.max(...s.data.filter(d => d.date <= (s.peakDate || '2099')).map(d => d.pct)).toFixed(2)]
+            }] : [])
+          ]
+        }
+      });
+    });
+
+    const option = {
+      backgroundColor: '#0a0a0f',
+      grid: {
+        left: 60,
+        right: 40,
+        top: 30,
+        bottom: 80
+      },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(20, 20, 30, 0.95)',
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+        textStyle: {
+          color: '#e0e0e0',
+          fontSize: 12
+        },
+        formatter: function(params) {
+          if (!params.length) return '';
+          let html = `<div style="font-size:12px;color:#888;margin-bottom:6px">${params[0].axisValue}</div>`;
+          params.sort((a, b) => parseFloat(b.value[1]) - parseFloat(a.value[1]));
+          for (const p of params) {
+            const asset = seriesData.find(s => s.name === p.seriesName);
+            if (!asset) continue;
+            // Find the closest price data
+            const dataPoint = asset.data.find(d => d.date === p.axisValue);
+            const priceStr = dataPoint ? formatPrice(dataPoint.price, asset.name) : '';
+            const pct = parseFloat(p.value[1]);
+            const pctColor = pct >= 0 ? '#66bb6a' : '#ef5350';
+            html += `<div style="display:flex;justify-content:space-between;gap:20px;line-height:22px">
+              <span>${p.marker} ${p.seriesName}</span>
+              <span><span style="color:${pctColor}">${pct >= 0 ? '+' : ''}${pct}%</span> <span style="color:#666;font-size:11px">${priceStr}</span></span>
+            </div>`;
+          }
+          return html;
+        }
+      },
+      xAxis: {
+        type: 'category',
+        boundaryGap: false,
+        axisLine: { lineStyle: { color: '#222' } },
+        axisTick: { show: false },
+        axisLabel: {
+          color: '#555',
+          fontSize: 11,
+          formatter: function(value) {
+            const d = new Date(value);
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            if (d.getMonth() === 0) return d.getFullYear().toString();
+            if (d.getMonth() % 3 === 0) return months[d.getMonth()];
+            return '';
+          }
+        },
+        splitLine: { show: false }
+      },
+      yAxis: {
+        type: 'value',
+        name: '',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: {
+          lineStyle: {
+            color: '#1a1a24',
+            type: 'solid'
+          }
+        },
+        axisLabel: {
+          color: '#444',
+          fontSize: 11,
+          formatter: '{value}%'
+        }
+      },
+      dataZoom: [
+        {
+          type: 'inside',
+          start: 0,
+          end: 100
+        },
+        {
+          type: 'slider',
+          start: 0,
+          end: 100,
+          height: 30,
+          bottom: 10,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(255,255,255,0.03)',
+          fillerColor: 'rgba(255,255,255,0.05)',
+          handleStyle: {
+            color: '#444',
+            borderColor: '#666'
+          },
+          textStyle: { color: '#555' },
+          dataBackground: {
+            lineStyle: { color: '#333' },
+            areaStyle: { color: 'rgba(255,255,255,0.02)' }
+          }
+        }
+      ],
+      series: series
+    };
+
+    function formatPrice(price, name) {
+      if (price >= 10000) return '$' + (price / 1000).toFixed(1) + 'k';
+      if (price >= 1000) return '$' + price.toFixed(0);
+      return '$' + price.toFixed(2);
+    }
+
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+  </script>
+</body>
+</html>

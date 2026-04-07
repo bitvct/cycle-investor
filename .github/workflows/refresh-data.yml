@@ -1,0 +1,38 @@
+name: Refresh asset data
+
+on:
+  schedule:
+    # Daily at 02:00 UTC (10:00 Beijing time, after US market close)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Fetch latest data from Yahoo Finance
+        run: npm run fetch-data
+
+      - name: Commit updated data.json
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet public/data.json; then
+            echo "No changes."
+          else
+            git add public/data.json
+            git commit -m "chore: refresh data $(date -u +%Y-%m-%d)"
+            git push
+          fi

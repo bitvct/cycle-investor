@@ -1,0 +1,145 @@
+//@version=5
+indicator("Super Cycle Observer", overlay=false, max_labels_count=500, format=format.percent)
+
+// ========== Settings ==========
+grp1 = "Asset 1 — BTC"
+a1_on      = input.bool(true, "Enable", group=grp1)
+a1_sym     = input.symbol("BINANCE:BTCUSDT", "Symbol", group=grp1)
+a1_label   = input.string("BTC", "Label", group=grp1)
+a1_color   = input.color(#f7931a, "Color", group=grp1)
+a1_bp      = input.float(15500, "Bottom Price", group=grp1)
+a1_bottom  = input.time(timestamp("2022-11-21"), "Cycle Bottom", group=grp1)
+a1_peak    = input.time(timestamp("2025-01-20"), "Cycle Top", group=grp1)
+a1_peaked  = input.bool(true, "Has Peaked", group=grp1)
+
+grp2 = "Asset 2 — Nasdaq"
+a2_on      = input.bool(true, "Enable", group=grp2)
+a2_sym     = input.symbol("NASDAQ:NDX", "Symbol", group=grp2)
+a2_label   = input.string("Nasdaq 100", "Label", group=grp2)
+a2_color   = input.color(#4fc3f7, "Color", group=grp2)
+a2_bp      = input.float(10440, "Bottom Price", group=grp2)
+a2_bottom  = input.time(timestamp("2022-10-13"), "Cycle Bottom", group=grp2)
+a2_peak    = input.time(timestamp("2025-02-19"), "Cycle Top", group=grp2)
+a2_peaked  = input.bool(true, "Has Peaked", group=grp2)
+
+grp3 = "Asset 3 — Gold"
+a3_on      = input.bool(true, "Enable", group=grp3)
+a3_sym     = input.symbol("COMEX:GC1!", "Symbol", group=grp3)
+a3_label   = input.string("Gold", "Label", group=grp3)
+a3_color   = input.color(#ffd54f, "Color", group=grp3)
+a3_bp      = input.float(1620, "Bottom Price", group=grp3)
+a3_bottom  = input.time(timestamp("2022-09-28"), "Cycle Bottom", group=grp3)
+a3_peak    = input.time(timestamp("2026-04-04"), "Cycle Top", group=grp3)
+a3_peaked  = input.bool(false, "Has Peaked", group=grp3)
+
+grp4 = "Asset 4 — ETH"
+a4_on      = input.bool(true, "Enable", group=grp4)
+a4_sym     = input.symbol("BINANCE:ETHUSDT", "Symbol", group=grp4)
+a4_label   = input.string("ETH", "Label", group=grp4)
+a4_color   = input.color(#627eea, "Color", group=grp4)
+a4_bp      = input.float(880, "Bottom Price", group=grp4)
+a4_bottom  = input.time(timestamp("2022-06-18"), "Cycle Bottom", group=grp4)
+a4_peak    = input.time(timestamp("2024-12-06"), "Cycle Top", group=grp4)
+a4_peaked  = input.bool(true, "Has Peaked", group=grp4)
+
+grp5 = "Asset 5 — S&P 500"
+a5_on      = input.bool(true, "Enable", group=grp5)
+a5_sym     = input.symbol("SP:SPX", "Symbol", group=grp5)
+a5_label   = input.string("S&P 500", "Label", group=grp5)
+a5_color   = input.color(#66bb6a, "Color", group=grp5)
+a5_bp      = input.float(3490, "Bottom Price", group=grp5)
+a5_bottom  = input.time(timestamp("2022-10-12"), "Cycle Bottom", group=grp5)
+a5_peak    = input.time(timestamp("2025-02-19"), "Cycle Top", group=grp5)
+a5_peaked  = input.bool(true, "Has Peaked", group=grp5)
+
+grp6 = "Asset 6 — Crude Oil"
+a6_on      = input.bool(true, "Enable", group=grp6)
+a6_sym     = input.symbol("NYMEX:CL1!", "Symbol", group=grp6)
+a6_label   = input.string("Crude Oil", "Label", group=grp6)
+a6_color   = input.color(#ef5350, "Color", group=grp6)
+a6_bp      = input.float(63.6, "Bottom Price", group=grp6)
+a6_bottom  = input.time(timestamp("2023-05-04"), "Cycle Bottom", group=grp6)
+a6_peak    = input.time(timestamp("2024-04-12"), "Cycle Top", group=grp6)
+a6_peaked  = input.bool(true, "Has Peaked", group=grp6)
+
+// ========== Fetch Prices ==========
+p1 = request.security(a1_sym, timeframe.period, close)
+p2 = request.security(a2_sym, timeframe.period, close)
+p3 = request.security(a3_sym, timeframe.period, close)
+p4 = request.security(a4_sym, timeframe.period, close)
+p5 = request.security(a5_sym, timeframe.period, close)
+p6 = request.security(a6_sym, timeframe.period, close)
+
+// ========== Normalize to percentage (using input bottom prices) ==========
+pct1 = a1_bp > 0 ? (p1 - a1_bp) / a1_bp * 100 : na
+pct2 = a2_bp > 0 ? (p2 - a2_bp) / a2_bp * 100 : na
+pct3 = a3_bp > 0 ? (p3 - a3_bp) / a3_bp * 100 : na
+pct4 = a4_bp > 0 ? (p4 - a4_bp) / a4_bp * 100 : na
+pct5 = a5_bp > 0 ? (p5 - a5_bp) / a5_bp * 100 : na
+pct6 = a6_bp > 0 ? (p6 - a6_bp) / a6_bp * 100 : na
+
+// ========== In bull range? ==========
+in1 = time >= a1_bottom and (a1_peaked ? time <= a1_peak : true)
+in2 = time >= a2_bottom and (a2_peaked ? time <= a2_peak : true)
+in3 = time >= a3_bottom and (a3_peaked ? time <= a3_peak : true)
+in4 = time >= a4_bottom and (a4_peaked ? time <= a4_peak : true)
+in5 = time >= a5_bottom and (a5_peaked ? time <= a5_peak : true)
+in6 = time >= a6_bottom and (a6_peaked ? time <= a6_peak : true)
+
+// ========== Colors: bright in bull range, faded outside ==========
+dim = 85  // transparency for faded portions (0=opaque, 100=invisible)
+
+c1_bright = color.new(a1_color, 0)
+c1_dim    = color.new(a1_color, dim)
+c2_bright = color.new(a2_color, 0)
+c2_dim    = color.new(a2_color, dim)
+c3_bright = color.new(a3_color, 0)
+c3_dim    = color.new(a3_color, dim)
+c4_bright = color.new(a4_color, 0)
+c4_dim    = color.new(a4_color, dim)
+c5_bright = color.new(a5_color, 0)
+c5_dim    = color.new(a5_color, dim)
+c6_bright = color.new(a6_color, 0)
+c6_dim    = color.new(a6_color, dim)
+
+// ========== Plot lines ==========
+// Each asset: one plot with conditional color (bright in range, dim outside)
+
+plot(a1_on ? pct1 : na, "BTC",       color=in1 ? c1_bright : c1_dim, linewidth=2)
+plot(a2_on ? pct2 : na, "Nasdaq",    color=in2 ? c2_bright : c2_dim, linewidth=2)
+plot(a3_on ? pct3 : na, "Gold",      color=in3 ? c3_bright : c3_dim, linewidth=2)
+plot(a4_on ? pct4 : na, "ETH",       color=in4 ? c4_bright : c4_dim, linewidth=2)
+plot(a5_on ? pct5 : na, "S&P 500",   color=in5 ? c5_bright : c5_dim, linewidth=2)
+plot(a6_on ? pct6 : na, "Crude Oil",  color=in6 ? c6_bright : c6_dim, linewidth=2)
+
+// ========== Zero line ==========
+hline(0, "0%", color=color.new(color.white, 90), linestyle=hline.style_dotted)
+
+// ========== Labels at cycle bottom & top ==========
+// Bottom labels
+if a1_on and time >= a1_bottom and time[1] < a1_bottom
+    label.new(bar_index, pct1, a1_label + " Bottom", color=color.new(a1_color, 70), textcolor=a1_color, style=label.style_label_up, size=size.small)
+if a2_on and time >= a2_bottom and time[1] < a2_bottom
+    label.new(bar_index, pct2, a2_label + " Bottom", color=color.new(a2_color, 70), textcolor=a2_color, style=label.style_label_up, size=size.small)
+if a3_on and time >= a3_bottom and time[1] < a3_bottom
+    label.new(bar_index, pct3, a3_label + " Bottom", color=color.new(a3_color, 70), textcolor=a3_color, style=label.style_label_up, size=size.small)
+if a4_on and time >= a4_bottom and time[1] < a4_bottom
+    label.new(bar_index, pct4, a4_label + " Bottom", color=color.new(a4_color, 70), textcolor=a4_color, style=label.style_label_up, size=size.small)
+if a5_on and time >= a5_bottom and time[1] < a5_bottom
+    label.new(bar_index, pct5, a5_label + " Bottom", color=color.new(a5_color, 70), textcolor=a5_color, style=label.style_label_up, size=size.small)
+if a6_on and time >= a6_bottom and time[1] < a6_bottom
+    label.new(bar_index, pct6, a6_label + " Bottom", color=color.new(a6_color, 70), textcolor=a6_color, style=label.style_label_up, size=size.small)
+
+// Top labels (only if peaked)
+if a1_on and a1_peaked and time >= a1_peak and time[1] < a1_peak
+    label.new(bar_index, pct1, a1_label + " Top", color=color.new(a1_color, 70), textcolor=a1_color, style=label.style_label_down, size=size.small)
+if a2_on and a2_peaked and time >= a2_peak and time[1] < a2_peak
+    label.new(bar_index, pct2, a2_label + " Top", color=color.new(a2_color, 70), textcolor=a2_color, style=label.style_label_down, size=size.small)
+if a3_on and a3_peaked and time >= a3_peak and time[1] < a3_peak
+    label.new(bar_index, pct3, a3_label + " Top", color=color.new(a3_color, 70), textcolor=a3_color, style=label.style_label_down, size=size.small)
+if a4_on and a4_peaked and time >= a4_peak and time[1] < a4_peak
+    label.new(bar_index, pct4, a4_label + " Top", color=color.new(a4_color, 70), textcolor=a4_color, style=label.style_label_down, size=size.small)
+if a5_on and a5_peaked and time >= a5_peak and time[1] < a5_peak
+    label.new(bar_index, pct5, a5_label + " Top", color=color.new(a5_color, 70), textcolor=a5_color, style=label.style_label_down, size=size.small)
+if a6_on and a6_peaked and time >= a6_peak and time[1] < a6_peak
+    label.new(bar_index, pct6, a6_label + " Top", color=color.new(a6_color, 70), textcolor=a6_color, style=label.style_label_down, size=size.small)
