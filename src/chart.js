@@ -1,7 +1,31 @@
-import * as echarts from 'echarts'
+import { DataZoomComponent, GridComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from 'echarts/components'
+import { getInstanceByDom, graphic, init, use } from 'echarts/core'
+import { LineChart, ScatterChart } from 'echarts/charts'
+import { CanvasRenderer } from 'echarts/renderers'
 import Sortable from 'sortablejs'
 
+use([
+  DataZoomComponent,
+  GridComponent,
+  LineChart,
+  MarkLineComponent,
+  MarkPointComponent,
+  ScatterChart,
+  TooltipComponent,
+  CanvasRenderer,
+])
+
 const ORDER_STORAGE_KEY = 'cycle-investor-order'
+
+let currentRender = null
+
+function cleanupCurrentRender() {
+  if (!currentRender) return
+  currentRender.abortController.abort()
+  currentRender.sortable?.destroy()
+  currentRender.charts.forEach(chart => chart.dispose())
+  currentRender = null
+}
 
 function loadSavedOrder() {
   try {
@@ -19,7 +43,10 @@ function saveOrder(names) {
  * Returns array of chart instances for cleanup.
  */
 export function renderLanes(processedAssets, cycleMode = 'bull') {
+  cleanupCurrentRender()
   const app = document.getElementById('app')
+  const abortController = new AbortController()
+  const { signal } = abortController
 
   // Apply saved order if any
   const savedOrder = loadSavedOrder()
@@ -83,12 +110,6 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
 
     // Check if this asset should be excluded from the current cycle
     const excluded = isExcluded(asset, cycleMode)
-
-    const formatDate = (d) => {
-      if (!d) return '?'
-      const [y, m, dd] = d.split('-')
-      return `${m}/${dd}/${y.slice(2)}`
-    }
 
     // Calculate days and label depending on cycle mode
     const bottomMs = new Date(asset.bottomDate).getTime()
@@ -175,10 +196,9 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
     // For excluded assets, fall back to 'pct' so the line still renders
     const displayField = excluded ? 'pct' : pctField
     let lastPct = null
-    let lastPrice = null
     const fullData = allDates.map(date => {
       const d = map.get(date)
-      if (d) { lastPct = d[displayField]; lastPrice = d.price }
+      if (d) lastPct = d[displayField]
       return lastPct
     })
     // Reset for highlight data pass (excluded assets get no highlight)
@@ -202,7 +222,7 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
 
     // ECharts
     const chartDom = document.getElementById(`lane-${idx}`)
-    const chart = echarts.init(chartDom, null, { renderer: 'canvas' })
+    const chart = init(chartDom, null, { renderer: 'canvas' })
 
     // Gradient
     const hex = asset.color
@@ -283,12 +303,12 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
           connectNulls: false,
           lineStyle: { width: 2, color: (cycleMode === 'bear' || cycleMode === 'prevBear') ? '#ef5350' : asset.color },
           areaStyle: (cycleMode === 'bear' || cycleMode === 'prevBear') ? {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            color: new graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: 'rgba(239,83,80,0.02)' },
               { offset: 1, color: 'rgba(239,83,80,0.25)' },
             ]),
           } : {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            color: new graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: `rgba(${r},${g},${b},0.3)` },
               { offset: 1, color: `rgba(${r},${g},${b},0.02)` },
             ]),
@@ -455,7 +475,7 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
   })
 
   // ========== Sortable: drag to reorder lanes ==========
-  Sortable.create(lanesEl, {
+  const sortable = Sortable.create(lanesEl, {
     animation: 150,
     handle: '.lane-handle',
     ghostClass: 'lane-ghost',
@@ -470,19 +490,9 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
   // ========== Time axis with bottom/top markers + dataZoom ==========
   const timeAxisDom = document.getElementById('timeAxis')
   // Dispose previous instance if exists
-  const existingAxis = echarts.getInstanceByDom(timeAxisDom)
+  const existingAxis = getInstanceByDom(timeAxisDom)
   if (existingAxis) existingAxis.dispose()
-  const axisChart = echarts.init(timeAxisDom, null, { renderer: 'canvas' })
-
-  // Collect ALL bottom and top dates from ALL cycles
-  const bottomMarkers = []
-  const topMarkers = []
-  sorted.forEach(a => {
-    if (a.prevBottomDate) bottomMarkers.push({ date: a.prevBottomDate, name: a.name })
-    if (a.bottomDate) bottomMarkers.push({ date: a.bottomDate, name: a.name })
-    if (a.prevTopDate) topMarkers.push({ date: a.prevTopDate, name: a.name })
-    if (a.topDate) topMarkers.push({ date: a.topDate, name: a.name })
-  })
+  const axisChart = init(timeAxisDom, null, { renderer: 'canvas' })
 
   // Show ALL bottoms and tops from ALL cycles
   // Skip markers from cycles where the asset is excluded (e.g., just IPO'd, didn't really participate)
@@ -678,7 +688,7 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
     dragStartZoom = { start: opt.dataZoom[0].start, end: opt.dataZoom[0].end }
     timeAxisDom.setPointerCapture(e.pointerId)
     e.preventDefault()
-  })
+  }, { signal })
 
   document.addEventListener('pointermove', (e) => {
     if (!isDragging) return
@@ -692,9 +702,9 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
     const newStart = Math.max(0, center - newHalf)
     const newEnd = Math.min(100, center + newHalf)
     axisChart.dispatchAction({ type: 'dataZoom', start: newStart, end: newEnd })
-  })
+  }, { signal })
 
-  document.addEventListener('pointerup', () => { isDragging = false })
+  document.addEventListener('pointerup', () => { isDragging = false }, { signal })
 
   // Scroll wheel on time axis → zoom
   timeAxisDom.addEventListener('wheel', (e) => {
@@ -708,7 +718,7 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
     const newStart = Math.max(0, center - newHalf)
     const newEnd = Math.min(100, center + newHalf)
     axisChart.dispatchAction({ type: 'dataZoom', start: newStart, end: newEnd })
-  }, { passive: false })
+  }, { passive: false, signal })
 
   // ========== Hover sync (manual, throttled) ==========
   let lastSyncTime = 0
@@ -780,7 +790,9 @@ export function renderLanes(processedAssets, cycleMode = 'bull') {
   })
 
   // Resize
-  window.addEventListener('resize', () => charts.forEach(c => c.resize()))
+  window.addEventListener('resize', () => charts.forEach(c => c.resize()), { signal })
+
+  currentRender = { abortController, charts, sortable }
 
   return charts
 }
